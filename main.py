@@ -1,12 +1,16 @@
 import requests
 import random
 import string
+import os
 from pymongo import MongoClient
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+from google.oauth2 import service_account
 
 # Impostazioni MongoDB
 MONGO_URI = "mongodb+srv://admin:Furkan10@miraculousitalia.cbpsh.mongodb.net/MiraculousItalia?retryWrites=true&w=majority"
 DATABASE_NAME = "MiraculousItalia"
-COLLECTION_NAME = "episodes"  # Nome della collection con gli episodi
+COLLECTION_NAME = "episodes"
 
 # API Keys e URL
 DROPLOAD_WORKER_BASE = "https://miraep.axelfireyt10.workers.dev/"
@@ -28,69 +32,93 @@ client = MongoClient(MONGO_URI)
 db = client[DATABASE_NAME]
 episodes_collection = db[COLLECTION_NAME]
 
+# Google Drive API Setup
+SCOPES = ['https://www.googleapis.com/auth/drive.file']
+SERVICE_ACCOUNT_FILE = "credentials.json"
+
 def estrai_file_code(video_url):
-    """
-    Estrae il file_code dall'URL di Dropload, es: da https://dropload.io/0n763ple7cdt -> "0n763ple7cdt"
-    """
+    """ Estrae il file_code dall'URL di Dropload """
     return video_url.strip().split("/")[-1] if video_url else None
 
 def genera_nome_file(season, episode):
-    """
-    Genera un nome per il file nel formato IT{season}{episode}_random.mp4
-    """
+    """ Genera un nome per il file nel formato IT{season}{episode}_random.mp4 """
     random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
     return f"IT{season}{str(episode).zfill(2)}_{random_str}.mp4"
 
-def upload_to_supervideo(worker_url, file_name):
-    """
-    Scarica il file dal Worker e lo carica su SuperVideo.
-    """
+def scarica_file(worker_url, file_name):
+    """ Scarica il file dal Worker """
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
         "Referer": "https://miraculousitalia.it"
     }
 
     try:
-        # Scarica il file dal Worker
-        print(f"⬇️ Scaricando {file_name} da {worker_url}...")
         response = requests.get(worker_url, headers=headers, stream=True)
 
         if response.status_code != 200:
             print(f"❌ Errore nel download: {response.status_code}")
             return None
 
-        # Salva il file temporaneamente
         temp_file_path = f"./{file_name}"
         with open(temp_file_path, "wb") as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
 
         print(f"✅ Download completato: {temp_file_path}")
-
-        # Ora carichiamo il file su SuperVideo
-        with open(temp_file_path, "rb") as f:
-            files = {"file": (file_name, f)}
-            params = {"key": SUPERVIDEO_API_KEY}
-            upload_response = requests.post("https://supervideo.cc/api/upload", files=files, data=params)
-
-        if upload_response.ok:
-            data = upload_response.json()
-            if data.get("status") == 200:
-                return data.get("result", {}).get("filecode")
-            else:
-                print("Errore nell'upload:", data)
-        else:
-            print("HTTP Error:", upload_response.status_code)
+        return temp_file_path
 
     except Exception as e:
-        print("❌ Eccezione durante l'upload:", e)
+        print(f"❌ Errore durante il download: {e}")
+        return None
 
+def upload_to_drive(file_path, file_name):
+    """ Carica un file su Google Drive e restituisce il link pubblico """
+    credentials = service_account.Credentials.from_service_account_file(
+        SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+    service = build('drive', 'v3', credentials=credentials)
+
+    file_metadata = {
+        'name': file_name,
+        'mimeType': 'video/mp4'
+    }
+    media = MediaFileUpload(file_path, mimetype='video/mp4', resumable=True)
+    file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+
+    file_id = file.get('id')
+
+    # Rendi il file pubblico
+    service.permissions().create(
+        fileId=file_id,
+        body={'role': 'reader', 'type': 'anyone'}
+    ).execute()
+
+    file_link = f"https://drive.google.com/uc?id={file_id}&export=download"
+    print(f"✅ File caricato su Google Drive: {file_link}")
+    return file_link
+
+def upload_to_supervideo_from_drive(drive_url):
+    """ Carica un video su SuperVideo partendo da un link Google Drive """
+    params = {
+        "key": SUPERVIDEO_API_KEY,
+        "url": drive_url,
+        "adult": "0"
+    }
+
+    response = requests.get(SUPERVIDEO_UPLOAD_URL, params=params)
+
+    if response.ok:
+        data = response.json()
+        if data.get("status") == 200:
+            print(f"✅ Upload completato su SuperVideo: {data['result']}")
+            return data["result"]
+        else:
+            print("❌ Errore nell'upload:", data)
+    else:
+        print(f"❌ HTTP Error: {response.status_code}")
     return None
 
 def sposta_file_nella_cartella(file_code, folder_id):
-    """
-    Sposta il file appena caricato nella cartella corretta su SuperVideo.
-    """
+    """ Sposta il file nella cartella corretta su SuperVideo """
     params = {
         "key": SUPERVIDEO_API_KEY,
         "file_code": file_code,
@@ -106,15 +134,13 @@ def sposta_file_nella_cartella(file_code, folder_id):
             else:
                 print("Errore nel cambio cartella:", data)
         else:
-            print("HTTP Error:", response.status_code)
+            print(f"❌ HTTP Error: {response.status_code}")
     except Exception as e:
-        print("Eccezione durante il cambio cartella:", e)
+        print("❌ Eccezione durante il cambio cartella:", e)
     return False
 
 def processa_episodi():
-    """
-    Itera sugli episodi e li trasferisce da Dropload a SuperVideo.
-    """
+    """ Scarica i file dal Worker, li carica su Google Drive e poi li invia a SuperVideo """
     for episodio in episodes_collection.find():
         video_url = episodio.get("videoUrl")
         season = episodio.get("season")
@@ -129,24 +155,28 @@ def processa_episodi():
             print(f"⚠️ Impossibile estrarre file code per {video_url}")
             continue
 
-        # Costruisce l'URL del worker
         worker_url = f"{DROPLOAD_WORKER_BASE}?file_code={file_code}"
-
-        # Genera il nome del file
         file_name = genera_nome_file(season, episode)
         print(f"📂 Processando {episodio.get('slug')} → {file_name}")
         print(f"🔗 URL Worker: {worker_url}")
 
-        # Effettua l'upload su SuperVideo
-        supervideo_file_code = upload_to_supervideo(worker_url, file_name)
-        if supervideo_file_code:
-            print(f"✅ Upload completato per {episodio.get('slug')} → {supervideo_file_code}")
+        file_path = scarica_file(worker_url, file_name)
+        if not file_path:
+            print(f"❌ Download fallito per {episodio.get('slug')}")
+            continue
 
-            # Sposta il file nella cartella giusta
+        drive_url = upload_to_drive(file_path, file_name)
+        if not drive_url:
+            print(f"❌ Upload su Drive fallito per {episodio.get('slug')}")
+            continue
+
+        supervideo_file_code = upload_to_supervideo_from_drive(drive_url)
+        if supervideo_file_code:
             folder_id = FOLDER_IDS[season]
             sposta_file_nella_cartella(supervideo_file_code, folder_id)
-        else:
-            print(f"❌ Upload fallito per {episodio.get('slug')}.")
+
+        # Rimuove il file locale dopo l'upload per risparmiare spazio
+        os.remove(file_path)
 
 if __name__ == "__main__":
     processa_episodi()
