@@ -4,7 +4,7 @@ import time
 # Configurazione
 START_ID = 841836  # ID iniziale
 END_ID = 849879    # ID finale 
-DELAY = 3          # Secondi tra le richieste
+DELAY = 2          # Secondi tra le richieste
 COOKIES = {
     "xfsts": "06we6yy56eiou0yj",
     "login": "axelfire",
