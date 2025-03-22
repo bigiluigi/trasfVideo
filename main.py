@@ -2,9 +2,9 @@ import requests
 import time
 
 # Configurazione
-START_ID = 840807  # ID iniziale
+START_ID = 840835  # ID iniziale
 END_ID = 849879    # ID finale 
-DELAY = 5          # Secondi tra le richieste
+DELAY = 2          # Secondi tra le richieste
 COOKIES = {
     "xfsts": "06we6yy56eiou0yj",
     "login": "axelfire",
