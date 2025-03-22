@@ -2,7 +2,7 @@ import requests
 import time
 
 # Configurazione
-START_ID = 840835  # ID iniziale
+START_ID = 840865  # ID iniziale
 END_ID = 849879    # ID finale 
 DELAY = 2          # Secondi tra le richieste
 COOKIES = {
