@@ -81,18 +81,18 @@ def get_filecode_by_name(file_name):
     """Recupera il filecode cercando il file per nome tramite l'API di SuperVideo."""
     params = {
         "key": SUPERVIDEO_API_KEY,
-        "title": file_name,
+        "name": file_name,  # Utilizziamo "name" per la ricerca
         "page": 1,
-        "per_page": 50  # prova ad aumentare se necessario
+        "per_page": 50  # Prova ad aumentare se necessario
     }
     try:
         response = requests.get(SUPERVIDEO_FILE_LIST_URL, params=params)
-        data = response.json()  # si aspetta un dizionario
-        results = data.get("result", [])
-        if not isinstance(results, list):
-            print("❌ Il campo 'result' non è una lista:", results)
+        data = response.json()  # ci aspettiamo un dizionario
+        files = data.get("files", [])
+        if not isinstance(files, list):
+            print("❌ Il campo 'files' non è una lista:", files)
             return None
-        for item in results:
+        for item in files:
             # Confronta il nome esatto del file
             if item.get("name") == file_name:
                 return item.get("filecode")
