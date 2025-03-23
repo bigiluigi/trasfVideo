@@ -5,6 +5,7 @@ import time
 import magic
 from pymongo import MongoClient
 from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Configurazione MongoDB
 MONGO_URI = "mongodb+srv://admin:Furkan10@miraculousitalia.cbpsh.mongodb.net/MiraculousItalia?retryWrites=true&w=majority"
@@ -38,6 +39,7 @@ def estrai_file_code(video_url):
 
 def genera_nome_file(season, episode):
     """Genera un nome per il file in base alla stagione e all'episodio."""
+    # Il titolo usato in upload non contiene l'estensione, quindi usiamo "IT{season}{episode}"
     return f"IT{season}{str(episode).zfill(2)}.mp4"
 
 def scarica_file(worker_url, file_name):
@@ -91,7 +93,6 @@ def get_filecode_by_name(file_name):
     try:
         response = requests.get(SUPERVIDEO_FILE_LIST_URL, params=params)
         data = response.json()
-        # Naviga nella struttura: data["result"]["files"]
         result = data.get("result", {})
         files = result.get("files", [])
         if not isinstance(files, list):
@@ -160,46 +161,69 @@ def sposta_file_nella_cartella(file_code, folder_id):
         print(f"❌ Eccezione nel cambio cartella: {e}")
     return False
 
-def processa_episodi():
-    """Processa tutti gli episodi e li trasferisce da Dropload a SuperVideo."""
-    for episodio in episodes_collection.find():
+def process_episode(episodio):
+    """
+    Processa un singolo episodio: scarica, carica su SuperVideo e sposta nella cartella corretta.
+    Se l'episodio appartiene alla stagione 1 ed è compreso tra 17 e 26, viene saltato.
+    """
+    try:
         video_url = episodio.get("videoUrl")
         season = episodio.get("season")
         episode = episodio.get("episodeNumber")
+        title = episodio.get("slug", episodio.get("title", "Episodio"))
+
+        # Salta gli episodi già processati per la stagione 1 (episodi 17-26)
+        if season == 1 and 17 <= int(episode) <= 26:
+            print(f"⏩ Salto {title} (episodio già processato)")
+            return
 
         if not video_url or season not in FOLDER_IDS:
-            print(f"⚠️ Episodio {episodio.get('slug', episodio.get('title', 'Sconosciuto'))} non valido.")
-            continue
+            print(f"⚠️ Episodio {title} non valido.")
+            return
 
         file_code = estrai_file_code(video_url)
         if not file_code:
             print(f"⚠️ Impossibile estrarre file code per {video_url}")
-            continue
+            return
 
         worker_url = f"{DROPLOAD_WORKER_BASE}?file_code={file_code}"
         file_name = genera_nome_file(season, episode)
-
-        print(f"📂 Processando {episodio.get('slug', episodio.get('title', 'Episodio'))} → {file_name}")
+        print(f"📂 Processando {title} → {file_name}")
         print(f"🔗 URL Worker: {worker_url}")
 
         file_path = scarica_file(worker_url, file_name)
         if not file_path:
-            print(f"❌ Download fallito per {episodio.get('slug', episodio.get('title'))}.")
-            continue
+            print(f"❌ Download fallito per {title}.")
+            return
 
         supervideo_file_code = upload_to_supervideo(file_path, file_name)
         if not supervideo_file_code:
-            print(f"❌ Upload fallito per {episodio.get('slug', episodio.get('title'))}.")
+            print(f"❌ Upload fallito per {title}.")
             os.remove(file_path)
-            continue
+            return
 
         folder_id = FOLDER_IDS[season]
         sposta_file_nella_cartella(supervideo_file_code, folder_id)
         os.remove(file_path)
         print(f"🗑️ File locale eliminato: {file_path}")
         time.sleep(5)
+    except Exception as e:
+        print(f"🔥 Errore durante il processing di {episodio.get('slug', episodio.get('title'))}: {e}")
+
+def processa_episodi_concurrent(max_workers=6):
+    """Processa gli episodi in modo concorrente con un massimo di 'max_workers' thread."""
+    # Recupera tutti gli episodi dal database
+    episodi = list(episodes_collection.find())
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(process_episode, episodio) for episodio in episodi]
+        for future in as_completed(futures):
+            # Se necessario, qui possiamo gestire eventuali errori provenienti dalle future.
+            try:
+                future.result()
+            except Exception as e:
+                print(f"🔥 Errore in un thread: {e}")
 
 if __name__ == "__main__":
-    processa_episodi()
+    processa_episodi_concurrent(max_workers=6)
     print("✅ Tutti gli episodi sono stati processati. Il processo verrà ora terminato.")
     sys.exit(0)
