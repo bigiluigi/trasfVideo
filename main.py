@@ -39,7 +39,6 @@ def estrai_file_code(video_url):
 
 def genera_nome_file(season, episode):
     """Genera un nome per il file in base alla stagione e all'episodio."""
-    # Il titolo usato in upload non contiene l'estensione, quindi usiamo "IT{season}{episode}"
     return f"IT{season}{str(episode).zfill(2)}.mp4"
 
 def scarica_file(worker_url, file_name):
@@ -164,17 +163,20 @@ def sposta_file_nella_cartella(file_code, folder_id):
 def process_episode(episodio):
     """
     Processa un singolo episodio: scarica, carica su SuperVideo e sposta nella cartella corretta.
-    Se l'episodio appartiene alla stagione 1 ed è compreso tra 17 e 26, viene saltato.
+    Viene processato solo se l'episodio corrisponde a:
+      - Stagione 4, episodio 13
+      - Stagione 5, episodio 4
+      - Stagione 5, episodio 9
     """
     try:
         video_url = episodio.get("videoUrl")
         season = episodio.get("season")
-        episode = episodio.get("episodeNumber")
+        episode = int(episodio.get("episodeNumber"))
         title = episodio.get("slug", episodio.get("title", "Episodio"))
 
-        # Salta gli episodi già processati per la stagione 1 (episodi 17-26)
-        if season == 1 and 17 <= int(episode) <= 26:
-            print(f"⏩ Salto {title} (episodio già processato)")
+        # Filtra gli episodi da processare
+        if not ((season == 4 and episode == 13) or (season == 5 and episode in [4, 9])):
+            print(f"⏩ Salto {title} (episodio non incluso nel batch)")
             return
 
         if not video_url or season not in FOLDER_IDS:
@@ -212,12 +214,10 @@ def process_episode(episodio):
 
 def processa_episodi_concurrent(max_workers=6):
     """Processa gli episodi in modo concorrente con un massimo di 'max_workers' thread."""
-    # Recupera tutti gli episodi dal database
     episodi = list(episodes_collection.find())
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(process_episode, episodio) for episodio in episodi]
         for future in as_completed(futures):
-            # Se necessario, qui possiamo gestire eventuali errori provenienti dalle future.
             try:
                 future.result()
             except Exception as e:
@@ -225,5 +225,5 @@ def processa_episodi_concurrent(max_workers=6):
 
 if __name__ == "__main__":
     processa_episodi_concurrent(max_workers=6)
-    print("✅ Tutti gli episodi sono stati processati. Il processo verrà ora terminato.")
+    print("✅ Tutti gli episodi selezionati sono stati processati. Il processo verrà ora terminato.")
     sys.exit(0)
