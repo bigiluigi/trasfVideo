@@ -13,29 +13,68 @@ class SuperVideoUploader:
             "Accept": "application/json",
             "Referer": "https://supervideo.cc/"
         })
-        # Aggiungi i cookie necessari (esempio)
         self.session.cookies.update({
             "xfsts": "06we6yy56eiou0yj",
             "login": "axelfire",
-            "cf_clearance": "3l3UFDuPJ9avXJ_8j.HBKD7C0PPEDOqydy_he.ULj2w-1742724937-1.2.1.1-EOPy6_vu.iF_xusRTKwbvf6Mou9HGpLktu4nkpXzQlq6WE_8F.5cKAqiTfldCMjSnUNgwcj0YJs6Op4ZAZOcHALLhaIL4FxNmpSh_m_lB5_36vTCg_ttdWrcr.a6n7B._CGFpNx.HRvA.1pLm78qc4aFhgztveCDW8kv5p4hD42BjZKQfZj3jsjU2C8FjJOvrkRJTCIIrEMcHg0MZ9_fAWS6wLtYxdw4NZ1fib2Er6WgfLpOVtPohypEX2VdH1.SHck29OxfR9IhHTJ4v3TRmhq7FvOKoFfGynYYkyZwZnKbk07acwBUzUR6oibhh3hO.rMLd2sGp.qx43g.xMEhWHLmyreBm2AJh4HsuuLkGjs"
+            "cf_clearance": "zTduQgYnG1i1CAQhtcNq3OrfDO2_i5WerIc8Hx19Wh4-1742725919-1.2.1.1-tH5.B4mRsx.AU0Pa9yb3EEJmMqUY5p2YPkH21z64BimWoWX6nU1mHcGLWQ2Isd1LF6bih3qxEqcY.t5obM60IkiBf9YyV8.cHms5RzmyIFnudHmlTIuLLnA_vXEfgj_WDpY4K1k_R41ZS_ssBhWHOKeDYPagkG9eOgA3.ym6sU.59YfZbyoN2OwleGGZnOKy.MHU2ITNFmz3J1H_likxLrw6tWwwqNG.ilPRCZojnnGg_VSMHL1CXSawACorTDVPVsXOF9V3v14tlXL7MEiJJ43Vuc_O8LawUoYbgbyidthcOg_1jKDu.VFRsC3HeLIG9feosdDUZyFNroJXTQ01bj0PuelEgyES1Scf3PYAbak"
         })
+
+    def get_upload_server(self):
+        """Ottiene il server di upload dalla API"""
+        try:
+            response = self.session.get(
+                f"{self.base_url}upload/server",
+                params={"key": self.api_key, "adult": 0},
+                timeout=10
+            )
+            response.raise_for_status()
+            
+            data = response.json()
+            if data.get("status") == 200:
+                return data["result"]
+            
+            raise Exception(f"Errore API: {data.get('msg', 'Unknown error')}")
+            
+        except Exception as e:
+            raise Exception(f"Fallito ottenimento server: {str(e)}")
+
+    def upload_file(self, server_url, file_path):
+        """Carica il file sul server specificato"""
+        try:
+            with open(file_path, "rb") as f:
+                files = {
+                    "key": (None, self.api_key),
+                    "adult": (None, "0"),
+                    "file": (f.name, f, "video/mp4")
+                }
+                
+                response = self.session.post(
+                    server_url,
+                    files=files,
+                    timeout=30
+                )
+                
+            if response.status_code == 200:
+                return self._parse_upload_response(response.text)
+                
+            raise Exception(f"HTTP Error: {response.status_code}")
+            
+        except Exception as e:
+            raise Exception(f"Upload fallito: {str(e)}")
 
     def _parse_upload_response(self, response_text):
         """Analizza la risposta HTML/JSON per estrarre errori o filecode"""
         try:
-            # Prova a parsare come JSON
             data = json.loads(response_text)
             if data.get("status") == 200:
                 return data["result"]["filecode"]
             return data.get("msg", "Errore sconosciuto")
         
         except json.JSONDecodeError:
-            # Parsing HTML per messaggi di errore
             soup = BeautifulSoup(response_text, 'html.parser')
             error = soup.find('textarea', {'name': 'st'})
             if error:
                 return f"ERRORE SERVER: {error.text}"
-            
             return "Risposta non riconosciuta dal server"
 
     def verify_upload(self, filecode, max_retries=10):
@@ -56,7 +95,7 @@ class SuperVideoUploader:
                         "details": data["result"][0]
                     }
                 
-                time.sleep(2 ** attempt)  # Backoff esponenziale
+                time.sleep(2 ** attempt)
                 
             except Exception as e:
                 print(f"⚠️ Tentativo {attempt + 1} fallito: {str(e)}")
@@ -71,12 +110,10 @@ if __name__ == "__main__":
     uploader = SuperVideoUploader(API_KEY)
     
     try:
-        # 1. Ottieni il server di upload
         print("🔄 Ottenimento server di upload...")
         server_url = uploader.get_upload_server()
         print(f"✅ Server: {server_url}")
 
-        # 2. Carica il file
         print("🚀 Avvio upload...")
         result = uploader.upload_file(server_url, FILE_PATH)
         
@@ -85,7 +122,6 @@ if __name__ == "__main__":
         else:
             print(f"📦 Risposta server: {result}")
             
-            # 3. Verifica approfondita
             print("🔍 Verifica stato avanzata...")
             verification = uploader.verify_upload(result)
             
