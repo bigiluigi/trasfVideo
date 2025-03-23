@@ -14,9 +14,7 @@ COLLECTION_NAME = "episodes"
 # Configurazione API
 DROPLOAD_WORKER_BASE = "https://miraep.axelfireyt10.workers.dev/"
 SUPERVIDEO_API_KEY = "22536ntvhqgnfbfdf6exk"
-# Nuovo endpoint per l'upload su SuperVideo
 SUPERUPLOAD_URL = "https://hfs305.serversicuro.cc/upload/01"
-# API per spostare il file nella cartella su SuperVideo
 SUPERVIDEO_SET_FOLDER_URL = "https://supervideo.cc/api/file/set_folder"
 
 # Folder IDs su SuperVideo
@@ -79,7 +77,7 @@ def validate_video(file_path):
     return True
 
 def upload_to_supervideo(file_path):
-    """Carica il file su SuperVideo utilizzando il nuovo endpoint."""
+    """Carica il file su SuperVideo utilizzando l'endpoint alternativo."""
     try:
         validate_video(file_path)
         with open(file_path, 'rb') as f:
@@ -94,10 +92,14 @@ def upload_to_supervideo(file_path):
             }
             response = requests.post(SUPERUPLOAD_URL, files=files)
             
-            # Se nel testo della risposta c'è "st", interpretiamo un errore dal server
-            if "st" in response.text:
-                error = response.text.split("st>")[1].split("</textarea")[0]
-                print(f"❌ Errore server: {error}")
+            # Gestione dell'errore dal server
+            if "st>" in response.text:
+                parts = response.text.split("st>")
+                if len(parts) > 1:
+                    error = parts[1].split("</textarea")[0]
+                    print(f"❌ Errore server: {error}")
+                else:
+                    print(f"❌ Errore server: {response.text}")
                 return None
             
             print("✅ Upload completato con successo!")
@@ -146,35 +148,27 @@ def processa_episodi():
             print(f"⚠️ Impossibile estrarre file code per {video_url}")
             continue
 
-        # Costruisce l'URL del Worker per scaricare il file
         worker_url = f"{DROPLOAD_WORKER_BASE}?file_code={file_code}"
         file_name = genera_nome_file(season, episode)
 
         print(f"📂 Processando {episodio.get('slug', episodio.get('title', 'Episodio'))} → {file_name}")
         print(f"🔗 URL Worker: {worker_url}")
 
-        # Scarica il file con barra di avanzamento
         file_path = scarica_file(worker_url, file_name)
         if not file_path:
             print(f"❌ Download fallito per {episodio.get('slug', episodio.get('title'))}.")
             continue
 
-        # Carica il file su SuperVideo utilizzando il nuovo metodo
         supervideo_file_code = upload_to_supervideo(file_path)
         if not supervideo_file_code:
             print(f"❌ Upload fallito per {episodio.get('slug', episodio.get('title'))}.")
             os.remove(file_path)
             continue
 
-        # Sposta il file nella cartella corretta (se il filecode è valido)
         folder_id = FOLDER_IDS[season]
         sposta_file_nella_cartella(supervideo_file_code, folder_id)
-
-        # Elimina il file locale per risparmiare spazio
         os.remove(file_path)
         print(f"🗑️ File locale eliminato: {file_path}")
-
-        # Delay per evitare sovraccarico sul server
         time.sleep(5)
 
 if __name__ == "__main__":
