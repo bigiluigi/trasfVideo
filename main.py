@@ -78,24 +78,29 @@ def validate_video(file_path):
     return True
 
 def get_filecode_by_name(file_name):
-    """Recupera il filecode cercando il file per nome tramite l'API di SuperVideo."""
+    """
+    Recupera il filecode cercando il file per nome tramite l'API di SuperVideo.
+    Viene rimosso l'estensione dal file_name perché l'API restituisce il titolo senza estensione.
+    """
+    base_name = file_name.rsplit(".", 1)[0]
     params = {
         "key": SUPERVIDEO_API_KEY,
-        "name": file_name,  # Utilizziamo "name" per la ricerca
         "page": 1,
-        "per_page": 50  # Prova ad aumentare se necessario
+        "per_page": 50
     }
     try:
         response = requests.get(SUPERVIDEO_FILE_LIST_URL, params=params)
-        data = response.json()  # ci aspettiamo un dizionario
-        files = data.get("files", [])
+        data = response.json()
+        # Naviga nella struttura: data["result"]["files"]
+        result = data.get("result", {})
+        files = result.get("files", [])
         if not isinstance(files, list):
             print("❌ Il campo 'files' non è una lista:", files)
             return None
         for item in files:
-            # Confronta il nome esatto del file
-            if item.get("name") == file_name:
-                return item.get("filecode")
+            # Confronta il titolo (senza estensione) col base_name
+            if item.get("title") == base_name:
+                return item.get("file_code")
     except Exception as e:
         print(f"❌ Errore durante il recupero del filecode: {e}")
     return None
