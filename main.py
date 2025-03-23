@@ -19,4 +19,4 @@ def upload_file(file_path):
             print("Dettagli errore:", response.text)
 
 # Utilizzo
-upload_file("video.mp4")
+upload_file("01x25.mp4")
