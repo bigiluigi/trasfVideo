@@ -25,18 +25,35 @@ FOLDER_IDS = {
     5: 28355   # s5
 }
 
+def verifica_connessione_mongodb():
+    """Verifica la connessione a MongoDB"""
+    try:
+        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        client.server_info()  # Forza una richiesta al server
+        print("✅ Connessione a MongoDB riuscita!")
+        return True
+    except Exception as e:
+        print(f"❌ Errore connessione MongoDB: {str(e)}")
+        return False
+
 class VideoMigrator:
     def __init__(self):
-        self.client = MongoClient(MONGO_URI)
-        self.db = self.client.MiraculousItalia
-        self.collection = self.db.episodes
-        self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "application/json"
-        })
-        self.total_episodes = self.collection.count_documents({})
-        self.processed = 0
+        print("🔄 Inizializzazione migratore...")
+        try:
+            self.client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=10000)
+            self.db = self.client.MiraculousItalia
+            self.collection = self.db.episodes
+            self.session = requests.Session()
+            self.session.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json"
+            })
+            self.total_episodes = self.collection.count_documents({})
+            self.processed = 0
+            print("✅ Migratore inizializzato correttamente!")
+        except Exception as e:
+            print(f"🔥 Errore durante l'inizializzazione: {str(e)}")
+            sys.exit(1)
 
     @staticmethod
     def genera_nome_file(season, episode):
@@ -176,6 +193,17 @@ class VideoMigrator:
             sys.exit(0)  # Termina il processo su Koyeb
 
 if __name__ == "__main__":
-    migratore = VideoMigrator()
     print("🚀 Avvio processo di migrazione...")
-    migratore.processa_episodi()
+    
+    # Verifica preliminare della connessione
+    if not verifica_connessione_mongodb():
+        print("❌ Impossibile continuare senza connessione al database.")
+        sys.exit(1)
+    
+    # Avvia il migratore
+    try:
+        migratore = VideoMigrator()
+        migratore.processa_episodi()
+    except Exception as e:
+        print(f"🔥 Errore critico durante l'esecuzione: {str(e)}")
+        sys.exit(1)
