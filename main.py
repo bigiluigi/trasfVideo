@@ -14,8 +14,12 @@ COLLECTION_NAME = "episodes"
 # Configurazione API
 DROPLOAD_WORKER_BASE = "https://miraep.axelfireyt10.workers.dev/"
 SUPERVIDEO_API_KEY = "22536ntvhqgnfbfdf6exk"
+# Endpoint alternativo per l'upload
 SUPERUPLOAD_URL = "https://hfs305.serversicuro.cc/upload/01"
+# API per spostare il file nella cartella su SuperVideo
 SUPERVIDEO_SET_FOLDER_URL = "https://supervideo.cc/api/file/set_folder"
+# Endpoint per ottenere la lista dei file (per recuperare il file code)
+SUPERVIDEO_FILE_LIST_URL = "https://supervideo.cc/api/file/list"
 
 # Folder IDs su SuperVideo
 FOLDER_IDS = {
@@ -76,8 +80,27 @@ def validate_video(file_path):
         raise ValueError(f"Formato non supportato: {detected_type}")
     return True
 
-def upload_to_supervideo(file_path):
-    """Carica il file su SuperVideo utilizzando l'endpoint alternativo."""
+def get_filecode_by_name(file_name):
+    """Recupera il filecode cercando il file per nome tramite l'API di SuperVideo."""
+    params = {
+        "key": SUPERVIDEO_API_KEY,
+        "title": file_name
+    }
+    try:
+        response = requests.get(SUPERVIDEO_FILE_LIST_URL, params=params)
+        if response.status_code == 200:
+            data = response.json()
+            results = data.get("result", [])
+            for item in results:
+                # Confronta il nome esatto del file
+                if item.get("name") == file_name:
+                    return item.get("filecode")
+    except Exception as e:
+        print(f"❌ Errore durante il recupero del filecode: {e}")
+    return None
+
+def upload_to_supervideo(file_path, file_name):
+    """Carica il file su SuperVideo utilizzando l'endpoint alternativo e recupera il filecode."""
     try:
         validate_video(file_path)
         with open(file_path, 'rb') as f:
@@ -103,13 +126,13 @@ def upload_to_supervideo(file_path):
                 return None
             
             print("✅ Upload completato con successo!")
-            # Proviamo a estrarre il filecode dalla risposta JSON, se presente
-            try:
-                data = response.json()
-                return data.get("result", {}).get("filecode")
-            except Exception:
-                # Se la risposta non è in formato JSON, restituiamo il testo completo
-                return response.text.strip()
+            # Recupera il filecode cercando il file per nome
+            filecode = get_filecode_by_name(file_name)
+            if filecode:
+                print(f"✅ Trovato filecode: {filecode}")
+            else:
+                print("❌ Impossibile recuperare il filecode dal file list.")
+            return filecode
     except Exception as e:
         print(f"🔥 Errore critico: {str(e)}")
         return None
@@ -159,7 +182,7 @@ def processa_episodi():
             print(f"❌ Download fallito per {episodio.get('slug', episodio.get('title'))}.")
             continue
 
-        supervideo_file_code = upload_to_supervideo(file_path)
+        supervideo_file_code = upload_to_supervideo(file_path, file_name)
         if not supervideo_file_code:
             print(f"❌ Upload fallito per {episodio.get('slug', episodio.get('title'))}.")
             os.remove(file_path)
