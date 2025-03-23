@@ -1,22 +1,22 @@
+import requests
+import os
 import sys
 import time
-import requests
-import random
-import string
 from pymongo import MongoClient
-from urllib.parse import urlparse
-from datetime import datetime
-from tqdm import tqdm  # Per la barra di avanzamento
+from tqdm import tqdm
 
-# Configurazione
-DROPLOAD_WORKER = "https://miraep.axelfireyt10.workers.dev/?file_code="
-SUPERVIDEO_UPLOAD_URL = "https://hfs305.serversicuro.cc/upload/01"
-API_KEY = "22536ntvhqgnfbfdf6exk"
+# Configurazione MongoDB
 MONGO_URI = "mongodb+srv://admin:Furkan10@miraculousitalia.cbpsh.mongodb.net/MiraculousItalia?retryWrites=true&w=majority"
-MAX_RETRIES = 3
-DELAY_BETWEEN_UPLOADS = 10
+DATABASE_NAME = "MiraculousItalia"
+COLLECTION_NAME = "episodes"
 
-# Mappatura cartelle
+# Configurazione API
+DROPLOAD_WORKER_BASE = "https://miraep.axelfireyt10.workers.dev/"
+SUPERVIDEO_API_KEY = "22536ntvhqgnfbfdf6exk"
+SUPERVIDEO_UPLOAD_URL = "https://supervideo.cc/api/upload"
+SUPERVIDEO_SET_FOLDER_URL = "https://supervideo.cc/api/file/set_folder"
+
+# Folder IDs su SuperVideo
 FOLDER_IDS = {
     1: 28351,  # s1
     2: 28352,  # s2
@@ -25,185 +25,135 @@ FOLDER_IDS = {
     5: 28355   # s5
 }
 
-def verifica_connessione_mongodb():
-    """Verifica la connessione a MongoDB"""
+# Connessione a MongoDB
+client = MongoClient(MONGO_URI)
+db = client[DATABASE_NAME]
+episodes_collection = db[COLLECTION_NAME]
+
+def estrai_file_code(video_url):
+    """Estrae il file_code dall'URL di Dropload."""
+    return video_url.strip().split("/")[-1] if video_url else None
+
+def genera_nome_file(season, episode):
+    """Genera un nome per il file in base alla stagione e all'episodio."""
+    return f"IT{season}{str(episode).zfill(2)}.mp4"
+
+def scarica_file(worker_url, file_name):
+    """Scarica il file tramite il Worker mostrando una barra di avanzamento."""
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-        client.server_info()  # Forza una richiesta al server
-        print("✅ Connessione a MongoDB riuscita!")
-        return True
-    except Exception as e:
-        print(f"❌ Errore connessione MongoDB: {str(e)}")
-        return False
-
-class VideoMigrator:
-    def __init__(self):
-        print("🔄 Inizializzazione migratore...")
-        try:
-            self.client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=10000)
-            self.db = self.client.MiraculousItalia
-            self.collection = self.db.episodes
-            self.session = requests.Session()
-            self.session.headers.update({
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept": "application/json"
-            })
-            self.total_episodes = self.collection.count_documents({})
-            self.processed = 0
-            print("✅ Migratore inizializzato correttamente!")
-        except Exception as e:
-            print(f"🔥 Errore durante l'inizializzazione: {str(e)}")
-            sys.exit(1)
-
-    @staticmethod
-    def genera_nome_file(season, episode):
-        """Genera nome file nel formato IT{season}{episode}_random.mp4"""
-        suffix = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
-        return f"IT{season}{str(episode).zfill(2)}_{suffix}.mp4"
-
-    def scarica_video(self, file_code):
-        """Scarica il video dal worker Cloudflare"""
-        url = f"{DROPLOAD_WORKER}{file_code}"
-        for _ in range(MAX_RETRIES):
-            try:
-                response = self.session.get(url, stream=True, timeout=15)
-                if response.status_code == 200:
-                    return response.content
-            except Exception as e:
-                print(f"⚠️ Errore download {file_code}: {str(e)}")
-            time.sleep(5)
-        return None
-
-    def carica_video(self, file_content, file_name, season):
-        """Carica il video su SuperVideo e sposta nella cartella"""
-        for attempt in range(MAX_RETRIES):
-            try:
-                files = {
-                    'api_key': (None, API_KEY),
-                    'file': (file_name, file_content, 'video/mp4')
-                }
-                
-                response = self.session.post(
-                    SUPERVIDEO_UPLOAD_URL,
-                    files=files,
-                    timeout=30
-                )
-                
-                if response.status_code == 200:
-                    filecode = self._estrai_filecode(response.text)
-                    if filecode and self._sposta_in_cartella(filecode, season):
-                        return filecode
-            except Exception as e:
-                print(f"⚠️ Errore upload {file_name}: {str(e)}")
-            
-            time.sleep(DELAY_BETWEEN_UPLOADS)
-        return None
-
-    def _estrai_filecode(self, response_text):
-        """Estrae il filecode dalla risposta HTML/JSON"""
-        try:
-            if "filecode" in response_text:
-                return response_text.split('name="filecode"')[1].split('</textarea>')[0].strip()
-        except Exception:
+        print(f"⬇️ Scaricando {file_name} da {worker_url}...")
+        response = requests.get(worker_url, headers=headers, stream=True)
+        if response.status_code != 200:
+            print(f"❌ Errore nel download: {response.status_code}")
             return None
 
-    def _sposta_in_cartella(self, filecode, season):
-        """Sposta il file nella cartella della stagione"""
-        fld_id = FOLDER_IDS.get(season, 28351)  # Default a s1
-        params = {
-            "key": API_KEY,
-            "file_code": filecode,
-            "fld_id": fld_id
-        }
-        
-        try:
-            response = self.session.get(
-                "https://supervideo.cc/api/file/set_folder",
-                params=params,
-                timeout=15
-            )
-            return response.json().get("status") == 200
-        except Exception as e:
-            print(f"⚠️ Errore spostamento {filecode}: {str(e)}")
-            return False
+        total_size = int(response.headers.get('content-length', 0))
+        file_path = os.path.join("./", file_name)
+        chunk_size = 8192
 
-    def aggiorna_database(self, episode_id, filecode):
-        """Aggiorna il record su MongoDB"""
-        self.collection.update_one(
-            {'_id': episode_id},
-            {'$set': {
-                'supervideo_code': filecode,
-                'migrato_il': datetime.now()
-            }}
-        )
+        with open(file_path, "wb") as f, tqdm(
+            total=total_size, unit='B', unit_scale=True, desc=file_name
+        ) as pbar:
+            for chunk in response.iter_content(chunk_size=chunk_size):
+                if chunk:
+                    f.write(chunk)
+                    pbar.update(len(chunk))
 
-    def processa_episodi(self):
-        """Processo completo di migrazione con barra di avanzamento"""
-        with tqdm(total=self.total_episodes, desc="Migrazione episodi", unit="ep") as pbar:
-            for episodio in self.collection.find():
-                try:
-                    # Salta episodi già migrati
-                    if episodio.get("supervideo_code"):
-                        pbar.update(1)
-                        continue
+        print(f"✅ Download completato: {file_path}")
+        return file_path
 
-                    video_url = episodio.get("videoUrl")
-                    if not video_url:
-                        pbar.update(1)
-                        continue
+    except Exception as e:
+        print(f"❌ Eccezione nel download: {e}")
+        return None
 
-                    # Estrai file code
-                    file_code = urlparse(video_url).path.split('/')[-1]
-                    if not file_code:
-                        pbar.update(1)
-                        continue
+def upload_to_supervideo(file_path, file_name):
+    """Carica il file su SuperVideo."""
+    try:
+        with open(file_path, "rb") as f:
+            files = {"file": (file_name, f, "video/mp4")}
+            params = {"key": SUPERVIDEO_API_KEY}
+            response = requests.post(SUPERVIDEO_UPLOAD_URL, files=files, data=params)
 
-                    # Scarica video
-                    video_content = self.scarica_video(file_code)
-                    if not video_content:
-                        print(f"❌ Download fallito: {episodio['slug']}")
-                        pbar.update(1)
-                        continue
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("status") == 200:
+                print(f"✅ Upload riuscito per {file_name}")
+                return data["result"]["filecode"]
+            else:
+                print(f"❌ Errore upload: {data}")
+        else:
+            print(f"❌ HTTP Error durante l'upload: {response.status_code}")
+    except Exception as e:
+        print(f"❌ Eccezione nell'upload: {e}")
+    return None
 
-                    # Prepara parametri
-                    season = episodio.get("season", 1)
-                    episode = episodio.get("episodeNumber", 1)
-                    nome_file = self.genera_nome_file(season, episode)
+def sposta_file_nella_cartella(file_code, folder_id):
+    """Sposta il file caricato nella cartella corretta su SuperVideo."""
+    params = {"key": SUPERVIDEO_API_KEY, "file_code": file_code, "fld_id": folder_id}
+    try:
+        response = requests.get(SUPERVIDEO_SET_FOLDER_URL, params=params)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("status") == 200:
+                print(f"✅ File {file_code} spostato nella cartella {folder_id}")
+                return True
+            else:
+                print(f"❌ Errore cambio cartella: {data}")
+        else:
+            print(f"❌ HTTP Error durante cambio cartella: {response.status_code}")
+    except Exception as e:
+        print(f"❌ Eccezione nel cambio cartella: {e}")
+    return False
 
-                    # Carica e organizza
-                    supervideo_code = self.carica_video(video_content, nome_file, season)
-                    
-                    if supervideo_code:
-                        print(f"✅ {episodio['slug']} -> {supervideo_code}")
-                        self.aggiorna_database(episodio['_id'], supervideo_code)
-                    else:
-                        print(f"❌ Migrazione fallita: {episodio['slug']}")
+def processa_episodi():
+    """Processa tutti gli episodi e li trasferisce da Dropload a SuperVideo."""
+    for episodio in episodes_collection.find():
+        video_url = episodio.get("videoUrl")
+        season = episodio.get("season")
+        episode = episodio.get("episodeNumber")
 
-                    pbar.update(1)
-                    self.processed += 1
+        if not video_url or season not in FOLDER_IDS:
+            print(f"⚠️ Episodio {episodio.get('slug', episodio.get('title', 'Sconosciuto'))} non valido.")
+            continue
 
-                except Exception as e:
-                    print(f"🔥 Errore critico: {episodio.get('slug', 'N/A')} - {str(e)}")
-                    time.sleep(10)
-                    pbar.update(1)
+        file_code = estrai_file_code(video_url)
+        if not file_code:
+            print(f"⚠️ Impossibile estrarre file code per {video_url}")
+            continue
 
-        # Chiudi il processo quando tutto è completato
-        if self.processed == self.total_episodes:
-            print("✅ Migrazione completata con successo!")
-            sys.exit(0)  # Termina il processo su Koyeb
+        # Costruisce l'URL del Worker per scaricare il file
+        worker_url = f"{DROPLOAD_WORKER_BASE}?file_code={file_code}"
+        file_name = genera_nome_file(season, episode)
+
+        print(f"📂 Processando {episodio.get('slug', episodio.get('title', 'Episodio'))} → {file_name}")
+        print(f"🔗 URL Worker: {worker_url}")
+
+        # Scarica il file con barra di avanzamento
+        file_path = scarica_file(worker_url, file_name)
+        if not file_path:
+            print(f"❌ Download fallito per {episodio.get('slug', episodio.get('title'))}.")
+            continue
+
+        # Carica su SuperVideo
+        supervideo_file_code = upload_to_supervideo(file_path, file_name)
+        if not supervideo_file_code:
+            print(f"❌ Upload fallito per {episodio.get('slug', episodio.get('title'))}.")
+            os.remove(file_path)
+            continue
+
+        # Sposta nella cartella corretta
+        folder_id = FOLDER_IDS[season]
+        sposta_file_nella_cartella(supervideo_file_code, folder_id)
+
+        # Elimina il file locale per risparmiare spazio
+        os.remove(file_path)
+        print(f"🗑️ File locale eliminato: {file_path}")
+
+        # Delay per evitare sovraccarico sul server
+        time.sleep(5)
 
 if __name__ == "__main__":
-    print("🚀 Avvio processo di migrazione...")
-    
-    # Verifica preliminare della connessione
-    if not verifica_connessione_mongodb():
-        print("❌ Impossibile continuare senza connessione al database.")
-        sys.exit(1)
-    
-    # Avvia il migratore
-    try:
-        migratore = VideoMigrator()
-        migratore.processa_episodi()
-    except Exception as e:
-        print(f"🔥 Errore critico durante l'esecuzione: {str(e)}")
-        sys.exit(1)
+    processa_episodi()
+    print("✅ Tutti gli episodi sono stati processati. Il processo verrà ora terminato.")
+    sys.exit(0)
