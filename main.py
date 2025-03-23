@@ -1,36 +1,127 @@
 import requests
 import time
+from urllib.parse import quote
 
-# Configurazione
-START_ID = 841836  # ID iniziale
-END_ID = 849879    # ID finale 
-DELAY = 2          # Secondi tra le richieste
-COOKIES = {
-    "xfsts": "06we6yy56eiou0yj",
-    "login": "axelfire",
-    "cf_clearance": "Nme1eBDRAUEG3HaYXCCvZgxngi7bykJa2qqN.g6EMbY-1742680165-1.2.1.1-_SKFTUEgDkIjKWuHcYObOyBctEK_4P.irPURh0J1ybiyAoVN6yZAQ05RGdf.C8U1zdG0.byiK4umswsWVAPPhC4wpSOVPsWmJf7KeJOi5MPrfQg_EI59OujWBb_fmy6dSDTTPmNaup2FohnLCpHzXpjM.s0joOjtkpMuZCNWAKYFmQqI.0M7wWeH.Eg_GgGY6vM8zidLQwnMCHkZWckbqdnyLag_dmz0MJXqZjNm0aAvnyASBiWyIMHrYhWhA_dPiIpJOLijhH.fX1EWdzRedbtsVyILkPFjwfw18waWzlxHeeseriGm4y7myeXjWiH8mvHhd7hQFNK9MlfFhhdoVlkNq4b7aT6DRv4BNIexhkg",
-    # Aggiungi altri cookie se necessario
-}
+class SuperVideoUploader:
+    def __init__(self, api_key):
+        self.api_key = api_key
+        self.base_url = "https://supervideo.cc/api/"
+        self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/json"
+        })
 
-def delete_files():
-    session = requests.Session()
-    session.cookies.update(COOKIES)
-    
-    for file_id in range(START_ID, END_ID + 1):
-        url = f"https://supervideo.cc/?op=upload_url&del_id={file_id}"
-        
+    def get_upload_server(self):
+        """Ottiene il server di upload dalla API"""
         try:
-            response = session.get(url, timeout=10)
+            response = self.session.get(
+                f"{self.base_url}upload/server",
+                params={"key": self.api_key, "adult": 0},
+                timeout=10
+            )
+            response.raise_for_status()
             
-            if response.status_code == 200:
-                print(f"✅ ID {file_id}: Cancellazione inviata")
-            else:
-                print(f"❌ ID {file_id}: Errore HTTP {response.status_code}")
+            data = response.json()
+            if data.get("status") == 200:
+                return data["result"]
+            
+            raise Exception(f"Errore API: {data.get('msg', 'Unknown error')}")
             
         except Exception as e:
-            print(f"🔥 ID {file_id}: Errore di connessione - {str(e)}")
-        
-        time.sleep(DELAY)
+            raise Exception(f"Fallito ottenimento server: {str(e)}")
+
+    def upload_file(self, server_url, file_path):
+        """Carica il file sul server specificato"""
+        try:
+            with open(file_path, "rb") as f:
+                files = {
+                    "key": (None, self.api_key),
+                    "adult": (None, "0"),
+                    "file": (f.name, f, "video/mp4")
+                }
+                
+                response = self.session.post(
+                    server_url,
+                    files=files,
+                    timeout=30
+                )
+                
+            if response.status_code == 200:
+                return self._parse_upload_response(response.text)
+                
+            raise Exception(f"HTTP Error: {response.status_code}")
+            
+        except Exception as e:
+            raise Exception(f"Upload fallito: {str(e)}")
+
+    def _parse_upload_response(self, response_text):
+        """Analizza la risposta di upload (supporta JSON e HTML)"""
+        try:
+            # Prova a parsare come JSON
+            data = requests.utils.json_loader(response_text)
+            if data.get("status") == 200:
+                return data["result"]["filecode"]
+            
+            return data.get("msg", "Unknown error")
+            
+        except ValueError:
+            # Parsing HTML fallback
+            if "upload_result" in response_text:
+                return "Upload completato via redirect"
+            
+            return "Risposta non riconosciuta dal server"
+
+    def verify_upload(self, filecode, max_retries=5):
+        """Verifica lo stato dell'upload"""
+        for attempt in range(max_retries):
+            try:
+                response = self.session.get(
+                    f"{self.base_url}file/info",
+                    params={"key": self.api_key, "file_code": filecode},
+                    timeout=10
+                )
+                
+                data = response.json()
+                if data.get("result", [{}])[0].get("status") == 200:
+                    return True
+                    
+                time.sleep(2 ** attempt)  # Backoff esponenziale
+                
+            except Exception:
+                continue
+                
+        return False
+
+# Configurazione
+API_KEY = "22536ntvhqgnfbfdf6exk"
+FILE_PATH = "video.mp4"
 
 if __name__ == "__main__":
-    delete_files()
+    uploader = SuperVideoUploader(API_KEY)
+    
+    try:
+        # 1. Ottieni il server di upload
+        print("🔄 Ottenimento server di upload...")
+        server_url = uploader.get_upload_server()
+        print(f"✅ Server: {server_url}")
+        
+        # 2. Carica il file
+        print("🚀 Avvio upload...")
+        result = uploader.upload_file(server_url, FILE_PATH)
+        
+        if isinstance(result, str) and len(result) == 12:  # Formato filecode
+            print(f"📦 Filecode ricevuto: {result}")
+            
+            # 3. Verifica finale
+            print("🔍 Verifica stato...")
+            if uploader.verify_upload(result):
+                print(f"🎉 Upload confermato! https://supervideo.cc/{result}")
+            else:
+                print("⚠️ Upload non verificato, controllare manualmente")
+                
+        else:
+            print(f"❌ Errore durante l'upload: {result}")
+            
+    except Exception as e:
+        print(f"🔥 Errore critico: {str(e)}")
