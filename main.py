@@ -1,5 +1,6 @@
 import requests
 import time
+import json
 from urllib.parse import quote
 
 class SuperVideoUploader:
@@ -58,14 +59,14 @@ class SuperVideoUploader:
     def _parse_upload_response(self, response_text):
         """Analizza la risposta di upload (supporta JSON e HTML)"""
         try:
-            # Prova a parsare come JSON
-            data = requests.utils.json_loader(response_text)
+            # Correzione: usa json.loads invece di json_loader
+            data = json.loads(response_text)
             if data.get("status") == 200:
                 return data["result"]["filecode"]
             
             return data.get("msg", "Unknown error")
             
-        except ValueError:
+        except json.JSONDecodeError:
             # Parsing HTML fallback
             if "upload_result" in response_text:
                 return "Upload completato via redirect"
