@@ -14,11 +14,8 @@ COLLECTION_NAME = "episodes"
 # Configurazione API
 DROPLOAD_WORKER_BASE = "https://miraep.axelfireyt10.workers.dev/"
 SUPERVIDEO_API_KEY = "22536ntvhqgnfbfdf6exk"
-# Endpoint alternativo per l'upload
 SUPERUPLOAD_URL = "https://hfs305.serversicuro.cc/upload/01"
-# API per spostare il file nella cartella su SuperVideo
 SUPERVIDEO_SET_FOLDER_URL = "https://supervideo.cc/api/file/set_folder"
-# Endpoint per ottenere la lista dei file (per recuperare il file code)
 SUPERVIDEO_FILE_LIST_URL = "https://supervideo.cc/api/file/list"
 
 # Folder IDs su SuperVideo
@@ -84,17 +81,21 @@ def get_filecode_by_name(file_name):
     """Recupera il filecode cercando il file per nome tramite l'API di SuperVideo."""
     params = {
         "key": SUPERVIDEO_API_KEY,
-        "title": file_name
+        "title": file_name,
+        "page": 1,
+        "per_page": 50  # prova ad aumentare se necessario
     }
     try:
         response = requests.get(SUPERVIDEO_FILE_LIST_URL, params=params)
-        if response.status_code == 200:
-            data = response.json()
-            results = data.get("result", [])
-            for item in results:
-                # Confronta il nome esatto del file
-                if item.get("name") == file_name:
-                    return item.get("filecode")
+        data = response.json()  # si aspetta un dizionario
+        results = data.get("result", [])
+        if not isinstance(results, list):
+            print("❌ Il campo 'result' non è una lista:", results)
+            return None
+        for item in results:
+            # Confronta il nome esatto del file
+            if item.get("name") == file_name:
+                return item.get("filecode")
     except Exception as e:
         print(f"❌ Errore durante il recupero del filecode: {e}")
     return None
@@ -126,7 +127,6 @@ def upload_to_supervideo(file_path, file_name):
                 return None
             
             print("✅ Upload completato con successo!")
-            # Recupera il filecode cercando il file per nome
             filecode = get_filecode_by_name(file_name)
             if filecode:
                 print(f"✅ Trovato filecode: {filecode}")
