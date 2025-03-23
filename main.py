@@ -2,6 +2,7 @@ import requests
 import os
 import sys
 import time
+import magic
 from pymongo import MongoClient
 from tqdm import tqdm
 
@@ -13,7 +14,9 @@ COLLECTION_NAME = "episodes"
 # Configurazione API
 DROPLOAD_WORKER_BASE = "https://miraep.axelfireyt10.workers.dev/"
 SUPERVIDEO_API_KEY = "22536ntvhqgnfbfdf6exk"
-SUPERVIDEO_UPLOAD_URL = "https://supervideo.cc/api/upload"
+# Nuovo endpoint per l'upload su SuperVideo
+SUPERUPLOAD_URL = "https://hfs305.serversicuro.cc/upload/01"
+# API per spostare il file nella cartella su SuperVideo
 SUPERVIDEO_SET_FOLDER_URL = "https://supervideo.cc/api/file/set_folder"
 
 # Folder IDs su SuperVideo
@@ -67,26 +70,47 @@ def scarica_file(worker_url, file_name):
         print(f"❌ Eccezione nel download: {e}")
         return None
 
-def upload_to_supervideo(file_path, file_name):
-    """Carica il file su SuperVideo."""
-    try:
-        with open(file_path, "rb") as f:
-            files = {"file": (file_name, f, "video/mp4")}
-            params = {"key": SUPERVIDEO_API_KEY}
-            response = requests.post(SUPERVIDEO_UPLOAD_URL, files=files, data=params)
+def validate_video(file_path):
+    """Verifica approfondita del file video."""
+    mime = magic.Magic(mime=True)
+    detected_type = mime.from_file(file_path)
+    if "video/mp4" not in detected_type:
+        raise ValueError(f"Formato non supportato: {detected_type}")
+    return True
 
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("status") == 200:
-                print(f"✅ Upload riuscito per {file_name}")
-                return data["result"]["filecode"]
-            else:
-                print(f"❌ Errore upload: {data}")
-        else:
-            print(f"❌ HTTP Error durante l'upload: {response.status_code}")
+def upload_to_supervideo(file_path):
+    """Carica il file su SuperVideo utilizzando il nuovo endpoint."""
+    try:
+        validate_video(file_path)
+        with open(file_path, 'rb') as f:
+            files = {
+                'api_key': (None, SUPERVIDEO_API_KEY),
+                'file': (
+                    f.name, 
+                    f, 
+                    'video/mp4', 
+                    {'Content-Disposition': f'form-data; name="file"; filename="{f.name}"'}
+                )
+            }
+            response = requests.post(SUPERUPLOAD_URL, files=files)
+            
+            # Se nel testo della risposta c'è "st", interpretiamo un errore dal server
+            if "st" in response.text:
+                error = response.text.split("st>")[1].split("</textarea")[0]
+                print(f"❌ Errore server: {error}")
+                return None
+            
+            print("✅ Upload completato con successo!")
+            # Proviamo a estrarre il filecode dalla risposta JSON, se presente
+            try:
+                data = response.json()
+                return data.get("result", {}).get("filecode")
+            except Exception:
+                # Se la risposta non è in formato JSON, restituiamo il testo completo
+                return response.text.strip()
     except Exception as e:
-        print(f"❌ Eccezione nell'upload: {e}")
-    return None
+        print(f"🔥 Errore critico: {str(e)}")
+        return None
 
 def sposta_file_nella_cartella(file_code, folder_id):
     """Sposta il file caricato nella cartella corretta su SuperVideo."""
@@ -135,14 +159,14 @@ def processa_episodi():
             print(f"❌ Download fallito per {episodio.get('slug', episodio.get('title'))}.")
             continue
 
-        # Carica su SuperVideo
-        supervideo_file_code = upload_to_supervideo(file_path, file_name)
+        # Carica il file su SuperVideo utilizzando il nuovo metodo
+        supervideo_file_code = upload_to_supervideo(file_path)
         if not supervideo_file_code:
             print(f"❌ Upload fallito per {episodio.get('slug', episodio.get('title'))}.")
             os.remove(file_path)
             continue
 
-        # Sposta nella cartella corretta
+        # Sposta il file nella cartella corretta (se il filecode è valido)
         folder_id = FOLDER_IDS[season]
         sposta_file_nella_cartella(supervideo_file_code, folder_id)
 
